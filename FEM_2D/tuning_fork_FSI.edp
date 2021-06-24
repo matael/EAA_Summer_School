@@ -1,0 +1,144 @@
+// This example solves the coupled problem between the vibrations in a tuning fork
+// and the sound field in the surrounding fluid
+
+// Number of frequencies
+int nbfrq = 10;
+// Lowest frequency
+real fmin = 100;
+// Highest frequency
+real fmax = 450;
+// Generate a list of frequencies
+real[int] freq(nbfrq);
+for(int ii=0; ii<nbfrq; ii++) {
+    freq(ii) = fmin+(ii*((fmax-fmin)/(nbfrq-1)));
+}
+
+// Density of the fluid
+real  rhof = 1.2;
+// Speed of sound
+real cel = 344;
+
+// Property of the tuning fork (steel)
+real  rhoS = 7800.,
+      E = 200e9,
+      nu = 0.2,
+      lambda = (nu*E)/((1+nu)*(1-2*nu)),
+      mu = E / (2*(1+nu));
+
+complex eta = 1. + 0.01*1i;
+
+// Mesh resolution for the tuning fork
+real nbe = 200;
+// Mesh resolution for the fluid region
+real nbeF = 50;
+
+// Dimension of the tuning fork
+real  l1 = 0.08, // Length of the branches
+      l2 = 0.03, // length of the foot
+      d =  0.0045, // thickness of the branch
+      r1 = 0.0045, // Internal radius.
+      r2 = r1+d; // External radius.
+
+// Geometry of the tuning fork
+border aa(t=0,1){ x=0 ; y=l2*t ; label=1;}
+border bb(t=-pi/2,-pi){ x=r2*cos(t) ; y=r2*sin(t) + l2+r2; label=1;}
+border cc(t=0,1){ x=-r2 ; y=l1*t+l2+r2 ; label=1;}
+border dd(t=0,1){ x=d*t-r2 ; y=l1+l2+r2 ; label=1;}
+border ee(t=1,0){ x=-(r2-r1) ; y=l1*t+l2+r2 ; label=1;}
+border ff(t=-pi,-pi/2){ x=r1*cos(t) ; y=r1*sin(t) + l2+r2; label=1;}
+border gg(t=0,1){ x=d*t ; y=l2+r2-r1 ; label=1;}
+border hh(t=-pi/2,0){ x=r1*cos(t)+d ; y=r1*sin(t) + l2+r2; label=1;}
+border ii(t=0,1){ x=d+r1 ; y=l1*t+l2+r2 ; label=1;}
+border jj(t=0,1){ x=d*t+d+r1 ; y=l1+l2+r2 ; label=10;} // Force excitation
+border kk(t=1,0){ x=2*d+r1 ; y=l1*t+l2+r2 ; label=1;}
+border ll(t=0,-pi/2){ x=r2*cos(t)+d ; y=r2*sin(t) + l2+r2; label=1;}
+border mm(t=1,0){ x=d ; y=l2*t ; label=1;}
+border nn(t=1,0){ x=d*t ; y=0. ; label=20;} // fixed boundary
+
+// Dimension of the air cavity
+real lx = .4, ly = .4;
+
+// Geometry of the fluid region surrounding the fork
+real xc = d/2., yc = l2+d/2.;
+border f1(t=0,1){ x=lx/2.+xc-(lx*t)  ; y=-ly/2.+yc ; label=0;}
+border f2(t=0,1){ x=-lx/2.+xc  ; y=-ly/2.+yc + ly*t ; label=0;}
+border f3(t=1,0){ x=lx/2.+xc-(lx*t)  ; y=+ly/2.+yc ; label=0;}
+border f4(t=0,1){ x=+lx/2.+xc  ; y=ly/2.+yc - ly*t ; label=0;}
+
+// Generate the mesh for the structure
+mesh ThS = buildmesh(aa(-ceil(nbe*l2))+bb(-ceil(nbe*0.5*pi*r2))+cc(-ceil(nbe*l1))+dd(-ceil(nbe*d))+ee(-ceil(nbe*l1))+ff(-ceil(nbe*0.5*pi*r1))+gg(-ceil(nbe*d))+hh(-ceil(nbe*0.5*pi*r1))+ii(-ceil(nbe*l1))+jj(-ceil(nbe*d))+kk(-ceil(nbe*l1))+ll(-ceil(nbe*0.5*pi*r2))+mm(-ceil(nbe*l2))+nn(-ceil(nbe*d)),fixeborder=true);
+
+// Generate the mesh for the fluid
+mesh ThF = buildmesh(aa(ceil(nbe*l2))+bb(ceil(nbe*0.5*pi*r2))+cc(ceil(nbe*l1))+dd(ceil(nbe*d))+ee(ceil(nbe*l1))+ff(ceil(nbe*0.5*pi*r1))+gg(ceil(nbe*d))+hh(ceil(nbe*0.5*pi*r1))+ii(ceil(nbe*l1))+jj(ceil(nbe*d))+kk(ceil(nbe*l1))+ll(ceil(nbe*0.5*pi*r2))+mm(ceil(nbe*l2))+nn(ceil(nbe*d))+f1(-ceil(nbeF*lx))+f2(-ceil(nbeF*ly))+f3(-ceil(nbeF*lx))+f4(-ceil(nbeF*ly)),fixeborder=true);
+
+// Plot the mesh
+plot(ThF, ThS, wait=true);
+
+// Macros to facilitate the definition of the variational formulation
+macro grad(p) [dx(p),dy(p)] //
+macro e(u1,u2) [dx(u1),dy(u2),(dy(u1)+dx(u2)) ] //
+macro CISO [ [ lambda+2*mu , lambda , 0],
+          [ lambda , lambda+2*mu , 0],
+          [ 0 , 0 , mu ]] //
+
+// Approximation space for the displacement field in the structure
+fespace VhS(ThS,[P2,P2]);
+
+// Approximation space for a scalar field in the structure
+fespace VhSs(ThS,P2);
+VhSs<complex> ux,uy;
+
+// Approximation space for the pressure field in the fluid
+fespace VhF(ThF,P2);
+VhF<complex> p;
+VhF ppw;
+
+// Loop over all frequencies
+for(int ii=0; ii<nbfrq; ii++) {
+  cout << "Frequency = " << freq(ii) << endl;
+  real omega = 2.*pi*freq(ii);
+
+  // Weak form for the structure
+  varf km([ux,uy],[vx,vy]) =	int2d(ThS)(((CISO*e(ux,uy))'*e(vx,vy))*eta)
+					                    - int2d(ThS)((omega^2.)*rhoS*(ux*vx+uy*vy))
+                    				  	+ on(20,ux=0.,uy=0.); // fixed boundary
+  // Weak form for the force
+  varf force([ux,uy],[vx,vy]) =	int1d(ThS,10)(freq(ii)*vx);
+
+  // Weak form for the Helmholtz equation in the fluid
+  varf hq(p,q) =             int2d(ThF)(grad(p)'*grad(q)/rhof/(omega^2.))
+                            - int2d(ThF)((p*q)/(rhof*(cel^2)));
+
+  // Weak form for the coupling terms
+  varf c([p],[vx,vy]) = - int1d(ThF,1,10,20)(p*N.x*vx + p*N.y*vy);
+
+  // Assemble the matrices for the structure and the fluid
+  matrix<complex> KM =	km(VhS,VhS);
+  matrix<complex> HQ =	hq(VhF,VhF);
+  // Assemble the coupling matrix and create its transpose
+  matrix<complex> C =	c(VhF,VhS);
+  matrix<complex> CT = -C';
+  
+  // Create the full system of equations
+  matrix<complex> M = [[  KM,	  C	],
+					            [   CT,		HQ ]];
+  // Solve the discrete problem
+  set(M,solver=sparsesolver);
+
+  complex[int] Fint = force(0,VhS);
+  complex[int] F( VhS.ndof + VhF.ndof ) ;
+  F = 0;
+  for(int n=0; n<Fint.n; n++) {
+    F[n] = Fint(n);
+  }
+
+  complex[int] UP( VhS.ndof + VhF.ndof ); UP = 0.; // Solution vector
+  UP = M^-1*F;
+
+  for(int n=0; n<VhF.ndof; n++) {
+	  p[](n) = UP[VhS.ndof + n];
+  }
+
+  ppw = real(p);
+  plot(ppw,ThS,fill=true,nbiso=20,value=true,wait=true);
+}

@@ -1,0 +1,85 @@
+// This example calculate the first few modes of a steel tuning fork
+
+// Property of the material (steel)
+real  rhoS = 7800.,
+      E = 200e9,
+      nu = 0.2,
+      lambda = (nu*E)/((1+nu)*(1-2*nu)),
+      mu = E / (2*(1+nu));
+
+// Mesh resolution
+real nbe = 300;
+
+// Dimension of the tuning fork
+real  l1 = 0.08,   // Length of the branches
+      l2 = 0.03,   // length of the foot
+      d =  0.0045, // thickness of the branch
+      r1 = 0.0045, // internal radius
+      r2 = r1+d;   // external radius
+
+// Boundaries of the tuning fork
+border aa(t=0,1){ x=0 ; y=l2*t ; label=1;}
+border bb(t=-pi/2,-pi){ x=r2*cos(t) ; y=r2*sin(t) + l2+r2; label=1;}
+border cc(t=0,1){ x=-r2 ; y=l1*t+l2+r2 ; label=1;}
+border dd(t=0,1){ x=d*t-r2 ; y=l1+l2+r2 ; label=1;}
+border ee(t=1,0){ x=-(r2-r1) ; y=l1*t+l2+r2 ; label=1;}
+border ff(t=-pi,-pi/2){ x=r1*cos(t) ; y=r1*sin(t) + l2+r2; label=1;}
+border gg(t=0,1){ x=d*t ; y=l2+r2-r1 ; label=1;}
+border hh(t=-pi/2,0){ x=r1*cos(t)+d ; y=r1*sin(t) + l2+r2; label=1;}
+border ii(t=0,1){ x=d+r1 ; y=l1*t+l2+r2 ; label=1;}
+border jj(t=0,1){ x=d*t+d+r1 ; y=l1+l2+r2 ; label=1;}
+border kk(t=1,0){ x=2*d+r1 ; y=l1*t+l2+r2 ; label=1;}
+border ll(t=0,-pi/2){ x=r2*cos(t)+d ; y=r2*sin(t) + l2+r2; label=1;}
+border mm(t=1,0){ x=d ; y=l2*t ; label=1;}
+border nn(t=1,0){ x=d*t ; y=0. ; label=2;} // Clamped edge
+
+// Generate the mesh
+mesh ThS = buildmesh(aa(-ceil(nbe*l2))+bb(-ceil(nbe*0.5*pi*r2))+cc(-ceil(nbe*l1))+dd(-ceil(nbe*d))+ee(-ceil(nbe*l1))+ff(-ceil(nbe*0.5*pi*r1))+gg(-ceil(nbe*d))+hh(-ceil(nbe*0.5*pi*r1))+ii(-ceil(nbe*l1))+jj(-ceil(nbe*d))+kk(-ceil(nbe*l1))+ll(-ceil(nbe*0.5*pi*r2))+mm(-ceil(nbe*l2))+nn(-ceil(nbe*d)),fixeborder=true);
+
+// Plot the mesh
+plot(ThS, wait=true, ps="fork_mesh.eps");
+
+// Macros
+macro e(ux,uy) [dx(ux),dy(uy),(dy(ux)+dx(uy)) ] //
+macro Hooke [ [ lambda+2*mu , lambda , 0],
+          [ lambda , lambda+2*mu , 0],
+          [ 0 , 0 , mu ]] //
+
+// Finite-element approximation space for the velocity
+fespace VhS(ThS,[P2,P2]);
+VhS [ux,uy],[uxtest,uytest];
+
+// Variational formulation for the mass matrix
+// Note that we impose to have zero displacement on the boundary labelled 20
+varf varmm([ux,uy],[uxtest,uytest]) =	int2d(ThS)(rhoS*(ux*uxtest+uy*uytest)) + on(2,ux=0.,uy=0.);
+
+// Variational formulation for the stiffness matrix
+// Note that we impose to have zero displacement on the boundary labelled 20
+varf varkk([ux,uy],[uxtest,uytest]) =	int2d(ThS)((Hooke*e(ux,uy))'*e(uxtest,uytest)) + on(2,ux=0.,uy=0.);
+
+// Assemble the mass matrix
+matrix KK =	varkk(VhS,VhS,solver=Crout,factorize=1,eps=1e-20);
+
+// Assemble the stiffness matrix
+matrix MM =	varmm(VhS,VhS,solver=CG,eps=1e-20);
+
+// The number of modes to keep
+int nev=25;
+real[int] ev(nev);
+VhS[int] [eV,eW](nev);
+
+// Solve the eigenvalue problem
+int k = EigenValue(KK,MM,sym=true,sigma=0,value=ev,vector=eV,tol=1e-10,maxit=0,ncv=0);
+k = min(k,nev);
+
+// Display each mode in turn
+for (int ii=0;ii<nev;ii++) {
+	if (sqrt(ev[ii])/(2*pi) > 1) {
+		cout << "Mode " << ii << " - " << sqrt(ev[ii])/(2*pi) << " Hz" << endl;
+
+		[ux,uy]=[eV[ii],eW[ii]];
+		real coef = 0.005/abs(ux[].linfty);
+		mesh Thm = movemesh(ThS, [x+real(ux)*coef,y+real(uy)*coef]);
+		plot(Thm, cmm = "Mode "+ii+" - freq = "+ sqrt(ev[ii])/(2*pi) +"Hz",wait=true);
+	}
+}
