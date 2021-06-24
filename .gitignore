@@ -1,0 +1,5 @@
+*-eps-converted-to.pdf
+*.spl
+*.aux
+*.log
+.ipynb_checkpoints
